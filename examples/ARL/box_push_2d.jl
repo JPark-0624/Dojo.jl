@@ -3,34 +3,36 @@ using DojoEnvironments: Z_AXIS
 using LinearAlgebra
 
 # -----------------------------
-# 1. 몸체(bodies)와 조인트(joints) 정의
+# 1. Define bodies and joints
 # -----------------------------
 origin = Origin{Float64}()
 
-# 박스: 가로, 세로, 높이, 질량
+# Box: width, height, depth, mass
 box = Box(1.0, 1.0, 1.0, 1.0)
 
-# 푸셔: 반지름, 질량
+# Pusher: radius, mass
 pusher = Dojo.Sphere(0.15, 0.2; color=RGBA(1,0,0,1))
 
-# 박스는 x–y 평면에서만 움직이고 z축 기준으로만 회전하는 Planar joint
-# two_finger_box_control.jl에서는 [1;0;0] (yz-평면) 썼는데,
-# 여기서는 z축이 평면의 법선 → x–y 평면 운동으로 해석.
+# The box uses a planar joint that allows translation in the x–y plane
+# and rotation about the z axis. In two_finger_box_control.jl they
+# used [1;0;0] (yz-plane); here we interpret Z_AXIS as the plane
+# normal, so motion is in the x–y plane.
 joint_box   = JointConstraint(PlanarAxis(origin, box, Z_AXIS))
 
-# 푸셔도 x–y 평면에서 움직이는 planar joint로 둔다.
+# The pusher is also attached with a planar joint (x–y plane motion).
 joint_push  = JointConstraint(PlanarAxis(origin, pusher, Z_AXIS))
 
 bodies = [box, pusher]
 joints = [joint_box, joint_push]
 
 # -----------------------------
-# 2. 접촉(contact) 정의
-#   (two_finger_box_control.jl에서 그대로 가져온 패턴)
+# 2. Define contacts
+#   (pattern copied from two_finger_box_control.jl)
 # -----------------------------
 side = 1.0
 
-# 박스의 8개 코너에 접촉점 정의 (박스가 한 변 길이 1.0인 큐브라고 가정)
+# Define contact points at the 8 corners of the box
+# (assume a cube with side length = 1.0)
 contact_origins = [
             [[ side / 2.0;  side / 2.0; -side / 2.0]]
             [[ side / 2.0; -side / 2.0; -side / 2.0]]
@@ -42,13 +44,14 @@ contact_origins = [
             [[-side / 2.0; -side / 2.0;  side / 2.0]]
         ]
 
-# 노멀은 모두 z축 방향 (위/아래)
+# Normals are all in the z direction (up/down)
 normals = fill(Z_AXIS, 8)
 friction_coefficients = fill(0.5, 8)
 
-# Sphere–Box 충돌 모델 (two_finger_box_control.jl와 동일한 파라미터 형태)
+# Sphere–Box collision model (same parameter format as
+# two_finger_box_control.jl)
 collision = SphereBoxCollision{Float64,2,3,6}(
-    szeros(3), 1.0, 1.0, 2 * 1.0, 0.5
+    zeros(3), 1.0, 1.0, 2 * 1.0, 0.5
 )
 
 
@@ -68,36 +71,36 @@ contacts = [
 ]
 
 # -----------------------------
-# 3. 메커니즘 생성
+# 3. Create the mechanism
 # -----------------------------
 mech = Mechanism(
     origin,
     bodies,
     joints,
     contacts;
-    gravity = 0.0,      # 중력은 꺼두고, 순수 2D 평면 운동처럼 사용
+    gravity = 0.0,      # gravity is turned off to emulate pure 2D planar motion
     timestep = 0.05
 )
 
 # -----------------------------
-# 4. 초기 상태 설정
+# 4. Initial state setup
 # -----------------------------
-# x2: 위치 (translation) 벡터
-# 여기서는 z=0 평면 위에 놓여 있는 걸로 가정 (3D지만 2D처럼)
-box.state.x2    = [0.0, 0.0, 0.0]     # 박스는 원점 근처
-pusher.state.x2 = [-3.0, 0.0, 0.0]    # 박스를 왼쪽에서 +x 방향으로 밀어올 위치
+# x2: position (translation) vector
+# We assume everything is on the z=0 plane (3D simulation used as 2D)
+box.state.x2    = [0.0, 0.0, 0.0]     # box is near the origin
+pusher.state.x2 = [-3.0, 0.0, 0.0]    # pusher is placed to the left to push in +x direction
 
-# 초기 속도는 0
+# Initial velocities are zero
 box.state.v15    = [0.0, 0.0, 0.0]
 pusher.state.v15 = [0.0, 0.0, 0.0]
 
 # -----------------------------
-# 5. 컨트롤러: 푸셔만 +x 방향으로 움직이게
+# 5. Controller: move only the pusher in +x direction
 # -----------------------------
 function controller!(mechanism, k)
-    # 여기서는 아주 단순하게 "푸셔의 x-속도"를 강제로 지정하는 방식으로 구현
-    # → 나중에 이 부분을 set_input! 기반 force/torque 제어로 교체 가능.
-    v_push = 2.0           # m/s, world-frame +x 방향 속도
+    # Implement a very simple controller that forces the pusher's x-velocity
+    # → this can be replaced later with set_input!-based force/torque control.
+    v_push = 2.0           # m/s, world-frame +x velocity
 
     # We want the pusher body to have a fixed world-frame velocity [v_push, 0, 0].
     # Compute the minimal translational velocity coordinates (Δv) that produce
@@ -132,13 +135,13 @@ function controller!(mechanism, k)
 end
 
 # -----------------------------
-# 6. 시뮬레이션 & 시각화
+# 6. Simulation & visualization
 # -----------------------------
-sim_time = 5.0  # 3초간 시뮬레이션
+sim_time = 5.0  # simulate for 5 seconds
 storage = simulate!(mech, sim_time, controller!; record=true)
 
 for i in 1:10
-    println(storage.v[2][i])  # v15 저장값 확인 (linear vel)
+    println(storage.v[2][i])  # check stored v15 values (linear velocity)
 end
 
 visualize(mech, storage)
